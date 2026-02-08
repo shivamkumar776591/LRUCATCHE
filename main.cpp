@@ -1,149 +1,166 @@
 #include <bits/stdc++.h>
 using namespace std;
 
-class LRUCache {
+/* ===============================
+   FULLY ASSOCIATIVE LRU CACHE
+   =============================== */
+class FullyAssociativeCache {
+    int capacity;
+    list<int> dq;
+    unordered_map<int, list<int>::iterator> pos;
+
 public:
+    long hits = 0, misses = 0;
 
-    struct Node{
-        Node* next;
-        Node* prev;
-        int val;
-        int key;
-        public:
-        Node(int data,int key){
-            next = NULL;
-            prev = NULL;
-            val = data;
-            this->key = key;
-        }
-    };
-        Node* head= new Node(-1,-1);
-        Node* tail = new Node(-1,-1);
-       
-        unordered_map<int,Node*>mp;
-        void insertAtStart(int key,int data){
-            Node* newNode = new Node(data,key);
-            mp[key] = newNode;
-            if(head->next == tail){
-                head->next = newNode;
-                newNode->next = tail;
-                newNode->prev = head;
-                tail->prev = newNode;
-             
-                return;
+    FullyAssociativeCache(int cap) : capacity(cap) {}
+
+    bool access(int addr) {
+        if (pos.find(addr) == pos.end()) {
+            misses++;
+            if (dq.size() == capacity) {
+                int lru = dq.back();
+                dq.pop_back();
+                pos.erase(lru);
             }
-            newNode->next = head->next;
-            newNode->next->prev = newNode;
-            head->next = newNode;
-            newNode->prev = head;
-            
-
+        } else {
+            hits++;
+            dq.erase(pos[addr]);
         }
-        void deleteNode(int key){
-            Node* node = mp[key];
-            Node* prevNode = node->prev;
-           
-            prevNode->next = node->next;
-            node->next->prev = prevNode;
-           node->prev = NULL;
-           node->next = NULL;
-           delete(node);
-           mp.erase(key);
-        }
-        void deleteFromTail(){
-            Node* node = tail->prev;
-          
-             Node* prevNode = node->prev;
-               prevNode->next = tail;
-               tail->prev  = prevNode;
-             mp.erase(node->key);
-           
-           delete(node);
-          
-        }
-  int cap;
-    
-    
-    LRUCache(int capacity) {
-        cap = capacity;
-         head->next = tail;
-        tail->prev = head;
-    }
-    
-    int get(int key) {
-        if(mp.count(key)){
-            int data = mp[key]->val;
-            deleteNode(key);
-            insertAtStart(key,data);
-            return mp[key]->val;
-        }
-        return -1;
-    }
-    
-    void put(int key, int value) {
-      
-       if(mp.count(key)){
-        deleteNode(key);
-        insertAtStart(key,value);
-        return;
-       }else{
-        if(cap == 0){
-            // cout<<key<<" ";
-            deleteFromTail();
-            cap++;
-        }
-       insertAtStart(key,value);
-       cap--;
-
-       }
-
+        dq.push_front(addr);
+        pos[addr] = dq.begin();
+        return true;
     }
 };
 
-#include <iostream>
-using namespace std;
+/* ===============================
+   DIRECT MAPPED CACHE
+   =============================== */
+class DirectMappedCache {
+    vector<int> cache;
 
-int main() {
-    int capacity;
-    cout << "Enter cache capacity: ";
-    cin >> capacity;
+public:
+    long hits = 0, misses = 0;
 
-    LRUCache cache(capacity);
+    DirectMappedCache(int size) : cache(size, -1) {}
 
-    int choice;
-    while (true) {
-        cout << "\n1. put\n2. get\n0. exit\n";
-        cout << "Enter choice: ";
-        cin >> choice;
-
-        if (choice == 0) {
-            cout << "Exiting...\n";
-            break;
+    bool access(int addr) {
+        int index = addr % cache.size();
+        if (cache[index] == addr) {
+            hits++;
+            return true;
         }
-
-        if (choice == 1) {
-            int key, value;
-            cout << "Enter key and value: ";
-            cin >> key >> value;
-            cache.put(key, value);
-            cout << "Inserted (" << key << ", " << value << ")\n";
-        }
-        else if (choice == 2) {
-            int key;
-            cout << "Enter key: ";
-            cin >> key;
-            int result = cache.get(key);
-            if(result == -1) cout<<"Key has not been inserted yet ";
-            else
-            cout << "Value: " << result << endl;
-        }
-        else {
-            cout << "Invalid choice\n";
-        }
+        misses++;
+        cache[index] = addr;
+        return false;
     }
+};
+
+/* ===============================
+   CACHE LEVEL (L1 / L2 / L3)
+   =============================== */
+struct CacheLevel {
+    string name;
+    int latency;
+    bool isDirectMapped;
+
+    FullyAssociativeCache fa;
+    DirectMappedCache dm;
+
+    CacheLevel* next;
+
+    CacheLevel(string n, int cap, int lat, bool direct)
+        : name(n),
+          latency(lat),
+          isDirectMapped(direct),
+          fa(cap),
+          dm(cap),
+          next(nullptr) {}
+
+    bool access(int addr) {
+        if (isDirectMapped)
+            return dm.access(addr);
+        else
+            return fa.access(addr);
+    }
+
+    long hits() const {
+        return isDirectMapped ? dm.hits : fa.hits;
+    }
+
+    long misses() const {
+        return isDirectMapped ? dm.misses : fa.misses;
+    }
+};
+
+/* ===============================
+   ACCESS FLOW (MULTI-LEVEL)
+   =============================== */
+bool accessHierarchy(CacheLevel* level, int addr, int& cycles) {
+    cycles += level->latency;
+
+    if (level->access(addr)) {
+        return true;
+    }
+
+    if (level->next) {
+        bool found = accessHierarchy(level->next, addr, cycles);
+        level->access(addr); // promote upward
+        return found;
+    }
+
+    level->access(addr); // insert at lowest level
+    return false;
+}
+
+/* ===============================
+   MAIN
+   =============================== */
+int main() {
+    int choice;
+    cout << "Choose Cache Type:\n";
+    cout << "1. Direct-Mapped\n";
+    cout << "2. Fully Associative (LRU)\n";
+    cin >> choice;
+
+    bool directMapped = (choice == 1);
+
+    // Create cache hierarchy
+    CacheLevel L1("L1", 4, 1, directMapped);
+    CacheLevel L2("L2", 8, 5, directMapped);
+    CacheLevel L3("L3", 16, 15, directMapped);
+
+    L1.next = &L2;
+    L2.next = &L3;
+
+    int n;
+    cout << "Enter number of memory accesses: ";
+    cin >> n;
+
+    vector<int> accesses(n);
+    cout << "Enter memory addresses:\n";
+    for (int i = 0; i < n; i++)
+        cin >> accesses[i];
+
+    int totalCycles = 0;
+    for (int addr : accesses)
+        accessHierarchy(&L1, addr, totalCycles);
+
+    auto printStats = [](CacheLevel& c) {
+        long total = c.hits() + c.misses();
+        double hitRate = total ? (double)c.hits() / total : 0;
+        cout << c.name << " -> Hits: " << c.hits()
+             << " Misses: " << c.misses()
+             << " Hit Rate: " << hitRate << endl;
+    };
+
+    cout << "\n--- Cache Statistics ---\n";
+    printStats(L1);
+    printStats(L2);
+    printStats(L3);
+
+    double AMAT = (double)totalCycles / accesses.size();
+    cout << "\nAverage Memory Access Time (AMAT): "
+         << AMAT << " cycles\n";
 
     return 0;
 }
-
-
-
